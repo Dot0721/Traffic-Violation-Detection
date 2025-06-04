@@ -355,28 +355,48 @@ class YOLOv8:
         cv.putText(frame, f"R: {vehicle_info['right_signal']}", (x + w - 20, y + 15), cv.FONT_HERSHEY_SIMPLEX, 0.5, right_color, 1)
 
     def change_lane(self,coords,vehicle_data):
- 
-        #車道歷史紀錄
-        if not hasattr(self, 'vehicle_lane_history'):
-            self.vehicle_lane_history = {}
-        #車道x座標紀錄
-        laneMark = []
-        laneCount = 0
-        for i, lane in enumerate(coords):
-            laneCount += 1
-            if len(lane) > 10:
-                x = lane[10][0]
-                laneMark.append(x)
-            else:
-                laneMark.append(None)  # 如果第10點不存在，補None
+        """車輛變換車道檢查"""
 
-        #車輛底線中心點取得後，根據車道線分配車道
+        #車道歷史紀錄
+        if not hasattr(self, 'change_lane_history'):
+            self.change_lane_history = {
+                "lane_history": [],
+                "left_signal":[],
+                "right_signal":[]
+            }
+
+        #先取得車輛座標
         for vid, info in vehicle_data.items():
             x, y, w, h = info['bbox']
             center_x = x + w // 2
-            center_y = y + h // 2
+            center_y = y - h
             left_signal = info['left_signal']
             right_signal = info['right_signal']
+
+            #根據車輛y軸截取對應各車道線x座標
+            laneCount = 0
+            laneMark = []
+
+            for i in range(len(coords)):
+                lane = coords[i]
+                laneCount += 1
+                found = False
+                for j in range(len(lane)-1):
+                    #介於線端間
+                    if (lane[j][1]>=center_y>=lane[j+1][1]) or (lane[j][1]<=center_y<=lane[j+1][1]):
+                        x = lane[j+1][0]
+                        laneMark.append(x)
+                        found = True
+                        break
+                if not found:
+                    #y軸比線段低
+                    if(center_y>lane[0][1]):
+                        x=lane[0][0]
+                        laneMark.append(x)
+                    #y軸比線段高
+                    elif(center_y<lane[len(lane)-1][1]):
+                        x=lane[len(lane)-1][0]
+                        laneMark.append(x)
 
             #print(f"Vehicle {vid}:")
             #print(f"  Center: ({center_x}, {center_y})")
@@ -384,7 +404,8 @@ class YOLOv8:
             #print(f"  Right Signal: {right_signal}")
 
             #初始化目前車道編號
-            current_lane = None  
+            current_lane = None
+            
             if len(laneMark) == 2:
                 # 兩線：車道2, 3, 4
                 if center_x < laneMark[1]:
@@ -419,31 +440,41 @@ class YOLOv8:
                     current_lane = 5
 
             #分配車道後更新紀錄
-            if vid not in self.vehicle_lane_history:
-                self.vehicle_lane_history[vid] = []
+            if vid not in self.change_lane_history:
+                self.change_lane_history[vid] = []
 
-            history = self.vehicle_lane_history[vid]
+            history = self.change_lane_history[vid]
             if current_lane is not None and (len(history) == 0 or history[-1] != current_lane):
-                history.append(current_lane)
+                history.append({
+                    "lane_history":current_lane,
+                    "left_signal":left_signal,
+                    "right_signal":right_signal
+                })
                 if len(history) > 10:  #限制長度
                     history.pop(0)
 
-            print(f"  車道歷史: {history}")
-
-            
-            #變換車道及方向燈判斷
-            history = self.vehicle_lane_history[vid]
+            history = self.change_lane_history[vid]
+            #變換車道及方向燈判斷-以車輛行為作為基準
             if len(history) >= 3:
-                if history[-3] != history[-2] and history[-2] == history[-1]:#兩禎確認
-                    print(f"⚠️ 車輛 {vid} 正在變換車道！")
-                    if(left_signal!='FLASHING' or right_signal!='FLASHING'):
-                        print(f"⚠️ 車輛 {vid} 未打方向燈！")
+                if history[-3]["lane_history"] != history[-2]["lane_history"] and history[-2]["lane_history"] == history[-1]["lane_history"]:#兩禎確認
+                    print(f"⚠️ 車輛 {vid} 變換車道！")
+                    print(f"  車道歷史: {history}")
+                    #左轉
+                    if history[-3]["lane_history"]>history[-1]["lane_history"]:
+                        print("車輛左轉")
+                        if(history[-3]["left_signal"]!="FLASHING"):
+                            print(f"⚠️ 車輛 {vid} 左轉未打方向燈！")
+                    #右轉
+                    else:
+                        print("車輛右轉")
+                        if(history[-3]["right_signal"]!="FLASHING"):
+                            print(f"⚠️ 車輛 {vid} 右轉未打方向燈！")
+                            
+            #變換車道及方向燈判斷-以閃光燈為判斷標準
+            #if (left_signal=='FLASHING') or (right_signal=='FLASHING'):
+                #print(f"車輛 {vid} 變換車道")
 
-                """if len(history) >= 2 and history[-1] != history[-2]:#除錯用，一禎確認
-                    print(f"⚠️ 車輛 {vid} 正在變換車道！")
-                    if(left_signal!='FLASHING' or right_signal!='FLASHING'):
-                        print(f"⚠️ 車輛 {vid} 未打方向燈！")"""
-        return self.vehicle_lane_history
+        return self.change_lane_history
 
 if __name__ == "__main__":
     torch.backends.cudnn.benchmark = True
@@ -468,10 +499,9 @@ if __name__ == "__main__":
 
         processed_frame, vehicle_data = monitor.process_frame(cur, frame, frame_width, frame_height)
         lane_frame,coords=monitor.lanedete(processed_frame, net, img_transforms, cfg, cls_num_per_lane, frame_height, frame_width)
-        lane_history=monitor.change_lane(coords,vehicle_data)#lane_history={1: [2, 2, 3], 2: [4, 4, 4]...}id,lane_history
+        change_lane_history=monitor.change_lane(coords,vehicle_data)#lane_history=self.change_lane_history = {"lane_history": [],"left_signal":[],"right_signal":[]}
         out.write(lane_frame)
         cv.imshow('Traffic Monitor', lane_frame)
-
         if cv.waitKey(int(1000/fps)) & 0xFF == ord('q'):
             break
     out.release()
