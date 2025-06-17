@@ -126,7 +126,7 @@ class YOLOv8:
                 lane = np.array(lane, dtype=np.int32)
                 cv.polylines(frame, [lane], isClosed=False, color=(0, 255, 0), thickness=5)
 
-        return frame
+        return frame,coords
 
     def detect_and_track(self, frame):
         results = self.car_model.track(frame, persist=True, conf = 0.4)
@@ -354,12 +354,140 @@ class YOLOv8:
         right_color = color_map[vehicle_info['right_signal']]
         cv.putText(frame, f"R: {vehicle_info['right_signal']}", (x + w - 20, y + 15), cv.FONT_HERSHEY_SIMPLEX, 0.5, right_color, 1)
 
+    def change_lane_visualize(self,vid,vehicle_data):
+
+        if vid in vehicle_data:
+            data=vehicle_data[vid]
+            x,y,w,h=data['bbox']
+            # 繪製車輛邊界框
+            cv.rectangle(lane_frame, (x, y), (x + w, y + h), (0,0,255), 2)  
+
+    def change_lane(self,coords,vehicle_data):
+        """車輛變換車道檢查，限制於直線車道"""
+
+        #車道歷史紀錄
+        if not hasattr(self, 'change_lane_history'):
+            self.change_lane_history = {
+                "lane_history": [],
+                "left_signal":[],
+                "right_signal":[]
+            }
+
+        #先取得車輛座標
+        for vid, info in vehicle_data.items():
+            x, y, w, h = info['bbox']
+            center_x = x + w // 2
+            center_y = y - h
+            left_signal = info['left_signal']
+            right_signal = info['right_signal']
+
+            #根據車輛y軸截取對應各車道線x座標
+            laneCount = 0
+            laneMark = []
+
+            for i in range(len(coords)):
+                lane = coords[i]
+                laneCount += 1
+                found = False
+                for j in range(len(lane)-1):
+                    #介於線端間
+                    if (lane[j][1]>=center_y>=lane[j+1][1]) or (lane[j][1]<=center_y<=lane[j+1][1]):
+                        x = lane[j+1][0]
+                        laneMark.append(x)
+                        found = True
+                        break
+                if not found:
+                    #y軸比線段低
+                    if(center_y>lane[0][1]):
+                        x=lane[0][0]
+                        laneMark.append(x)
+                    #y軸比線段高
+                    elif(center_y<lane[len(lane)-1][1]):
+                        x=lane[len(lane)-1][0]
+                        laneMark.append(x)
+
+            #print(f"Vehicle {vid}:")
+            #print(f"  Center: ({center_x}, {center_y})")
+            #print(f"  Left Signal: {left_signal}")
+            #print(f"  Right Signal: {right_signal}")
+
+            #初始化目前車道編號
+            current_lane = None
+            
+            if len(laneMark) == 2:
+                # 兩線：車道2, 3, 4
+                if center_x < laneMark[1]:
+                    current_lane = 2
+                elif center_x < laneMark[0]:
+                    current_lane = 3
+                else:
+                    current_lane = 4
+
+            elif len(laneMark) == 3:
+                # 三線：車道2~5
+                if center_x < laneMark[0]:
+                    current_lane = 2
+                elif center_x < laneMark[1]:
+                    current_lane = 3
+                elif center_x < laneMark[2]:
+                    current_lane = 4
+                else:
+                    current_lane = 5
+
+            elif len(laneMark) == 4:
+                # 四線：車道1~5
+                if center_x < laneMark[2]:
+                    current_lane = 1
+                elif center_x < laneMark[0]:
+                    current_lane = 2
+                elif center_x < laneMark[1]:
+                    current_lane = 3
+                elif center_x < laneMark[3]:
+                    current_lane = 4
+                else:
+                    current_lane = 5
+
+            #分配車道後更新紀錄
+            if vid not in self.change_lane_history:
+                self.change_lane_history[vid] = []
+
+            history = self.change_lane_history[vid]
+            if current_lane is not None and (len(history) == 0 or history[-1] != current_lane):
+                history.append({
+                    "lane_history":current_lane,
+                    "left_signal":left_signal,
+                    "right_signal":right_signal
+                })
+                if len(history) > 10:  #限制長度
+                    history.pop(0)
+
+            history = self.change_lane_history[vid]
+            #變換車道及方向燈判斷-以車輛行為作為基準
+            if len(history) >= 3:
+                if history[-3]["lane_history"] != history[-2]["lane_history"] and history[-2]["lane_history"] == history[-1]["lane_history"]:#兩禎確認
+                    print(f"⚠️ 車輛 {vid} 變換車道！")
+                    print(f"  車道歷史: {history}")
+                    #左轉
+                    if history[-3]["lane_history"]>history[-1]["lane_history"]:
+                        print("車輛左轉")
+                        if(history[-3]["left_signal"]!="FLASHING"):
+                            print(f"⚠️ 車輛 {vid} 左轉未打方向燈！")
+                            self.change_lane_visualize(vid,vehicle_data)
+                    #右轉
+                    else:
+                        print("車輛右轉")
+                        if(history[-3]["right_signal"]!="FLASHING"):
+                            print(f"⚠️ 車輛 {vid} 右轉未打方向燈！")
+                            self.change_lane_visualize(vid,vehicle_data)
+
+        return history
+
 if __name__ == "__main__":
     torch.backends.cudnn.benchmark = True
 
     monitor = YOLOv8()
     net, img_transforms, cls_num_per_lane, cfg=monitor.lanemodel()
-    cap = cv.VideoCapture('videoplayback_3.mp4')#videoplayback_2 car_test motorcycle_data
+    cap = cv.VideoCapture('2019.mp4')#videoplayback_2 car_test motorcycle_data videoplayback_3.mp4
 
     fps = int(cap.get(cv.CAP_PROP_FPS))
     frame_width= int(cap.get(cv.CAP_PROP_FRAME_WIDTH))
@@ -376,10 +504,10 @@ if __name__ == "__main__":
         cur = frame_num / fps
 
         processed_frame, vehicle_data = monitor.process_frame(cur, frame, frame_width, frame_height)
-        lane_frame=monitor.lanedete(processed_frame, net, img_transforms, cfg, cls_num_per_lane, frame_height, frame_width)
+        lane_frame,coords=monitor.lanedete(processed_frame, net, img_transforms, cfg, cls_num_per_lane, frame_height, frame_width)
+        change_lane_history=monitor.change_lane(coords,vehicle_data)#lane_history=self.change_lane_history = {"lane_history": [],"left_signal":[],"right_signal":[]}
         out.write(lane_frame)
         cv.imshow('Traffic Monitor', lane_frame)
-
         if cv.waitKey(int(1000/fps)) & 0xFF == ord('q'):
             break
     out.release()
