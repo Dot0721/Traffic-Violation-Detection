@@ -354,8 +354,16 @@ class YOLOv8:
         right_color = color_map[vehicle_info['right_signal']]
         cv.putText(frame, f"R: {vehicle_info['right_signal']}", (x + w - 20, y + 15), cv.FONT_HERSHEY_SIMPLEX, 0.5, right_color, 1)
 
+    def change_lane_visualize(self,vid,vehicle_data):
+
+        if vid in vehicle_data:
+            data=vehicle_data[vid]
+            x,y,w,h=data['bbox']
+            # 繪製車輛邊界框
+            cv.rectangle(lane_frame, (x, y), (x + w, y + h), (0,0,255), 2)  
+
     def change_lane(self,coords,vehicle_data):
-        """車輛變換車道檢查"""
+        """車輛變換車道檢查，限制於直線車道"""
 
         #車道歷史紀錄
         if not hasattr(self, 'change_lane_history'):
@@ -464,17 +472,15 @@ class YOLOv8:
                         print("車輛左轉")
                         if(history[-3]["left_signal"]!="FLASHING"):
                             print(f"⚠️ 車輛 {vid} 左轉未打方向燈！")
+                            self.change_lane_visualize(vid,vehicle_data)
                     #右轉
                     else:
                         print("車輛右轉")
                         if(history[-3]["right_signal"]!="FLASHING"):
                             print(f"⚠️ 車輛 {vid} 右轉未打方向燈！")
-                            
-            #變換車道及方向燈判斷-以閃光燈為判斷標準
-            #if (left_signal=='FLASHING') or (right_signal=='FLASHING'):
-                #print(f"車輛 {vid} 變換車道")
+                            self.change_lane_visualize(vid,vehicle_data)
 
-        return self.change_lane_history
+        return history
 
 if __name__ == "__main__":
     torch.backends.cudnn.benchmark = True
