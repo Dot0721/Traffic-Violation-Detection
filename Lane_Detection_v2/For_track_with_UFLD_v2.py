@@ -170,7 +170,6 @@ def process_video(video_path: Path):
             for vid in vehicle_index:
                 lane_frame = monitor.draw_info(lane_frame, vid, False)
             out.write(lane_frame)
-            cv.imshow('Traffic Monitor', lane_frame)
 
             if cur >= END_SEC:
                 print("Video end")
@@ -184,7 +183,6 @@ def process_video(video_path: Path):
     finally:
         out.release()
         cap.release()
-        cv.destroyAllWindows()
 
     check_violation = len(violations) > 0
     if check_violation:
