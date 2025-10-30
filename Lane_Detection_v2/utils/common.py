@@ -17,7 +17,7 @@ def str2bool(v):
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('config', help = 'path to config file')
+    parser.add_argument('config', nargs='?', default='configs/culane_res34.py', help = 'path to config file')
     parser.add_argument('--local_rank', type=int, default=0)
 
     parser.add_argument('--dataset', default = None, type = str)
@@ -42,7 +42,7 @@ def get_args():
     parser.add_argument('--log_path', default = None, type = str)
     parser.add_argument('--finetune', default = None, type = str)
     parser.add_argument('--resume', default = None, type = str)
-    parser.add_argument('--test_model', default = None, type = str)
+    parser.add_argument('--test_model', default='weights/culane_res34.pth', type = str)
     parser.add_argument('--test_work_dir', default = None, type = str)
     parser.add_argument('--num_lanes', default = None, type = int)
     parser.add_argument('--auto_backup', action='store_false', help='automatically backup current code in the log path')
